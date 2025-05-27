@@ -4,6 +4,7 @@ import time
 import queue
 import zlib
 import random
+import os
 
 TOKEN_MSG = "9000"
 DATA_MSG_PREFIX = "7777:"
@@ -190,12 +191,23 @@ class RingNode:
             time.sleep(1)
 
     def start(self):
-        # Lista de peers para broadcast (exemplo fixo, pode ser lido de config)
-        self.peers = ["Alice", "Bob", "Carol"]
+        # Monta a lista de peers automaticamente lendo os arquivos de configuração
+        config_dir = os.path.dirname(__file__)
+        arquivos = [f for f in os.listdir(config_dir) if f.startswith('config_') and f.endswith('.txt')]
+        peers = []
+        for arq in arquivos:
+            with open(os.path.join(config_dir, arq), 'r') as f:
+                linhas = [linha.strip() for linha in f.readlines() if linha.strip()]
+                if len(linhas) >= 2:
+                    nickname = linhas[1]
+                    if nickname != self.nickname:
+                        peers.append(nickname)
+        self.peers = peers
         print("==== INICIANDO NÓ ====")
         print(f"Apelido: {self.nickname}")
         print(f"Escutando na porta: {self.listen_port}")
         print(f"Enviando para: {self.next_ip}:{self.next_port}")
+        print(f"Peers detectados: {self.peers}")
         print("======================")
         self.receiver_thread.start()
         self.user_thread.start()
