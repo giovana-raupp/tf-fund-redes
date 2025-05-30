@@ -6,8 +6,13 @@ import zlib
 import random
 import os
 
-TOKEN_MSG = "9000"
-DATA_MSG_PREFIX = "7777:"
+# ===============================
+# Trabalho Final - Redes de Computadores
+# Simulação de Rede em Anel com Token e CRC
+# ===============================
+
+TOKEN_MSG = "9000"  # Valor do token
+DATA_MSG_PREFIX = "7777:"  # Prefixo dos pacotes de dados
 # ---------------------------------------------------
 # Tempo (em segundos) que cada nó "segura" um pacote
 DEFAULT_DATA_TIME = 2
@@ -15,43 +20,43 @@ DEFAULT_DATA_TIME = 2
 
 class RingNode:
     def __init__(self, config_file, listen_port):
-        # lê config de 4 linhas
+        # Inicializa o nó lendo as configurações e preparando as threads e variáveis de controle
         self.read_config(config_file)
-        # tempo de dados fixo
-        self.data_time      = DEFAULT_DATA_TIME
-        self.listen_port    = listen_port
-        self.msg_queue      = queue.Queue(maxsize=10)
-        self.running        = True
-        self.awaiting_ack   = False
-        self.last_sent_msg  = None
-        self.retransmit     = None
-        self.retransmit_done = False
-        self.current_msg    = None  # Armazena a mensagem em processamento
+        self.data_time      = DEFAULT_DATA_TIME  # Tempo de espera para envio de dados
+        self.listen_port    = listen_port  # Porta UDP para escuta
+        self.msg_queue      = queue.Queue(maxsize=10)  # Fila de mensagens a serem enviadas
+        self.running        = True  # Controle de execução das threads
+        self.awaiting_ack   = False  # Indica se está aguardando confirmação de entrega
+        self.last_sent_msg  = None  # Última mensagem enviada (não mais usada)
+        self.retransmit     = None  # Armazena mensagem a ser retransmitida após NACK
+        self.retransmit_done = False  # Flag para garantir retransmissão única após NACK
+        self.current_msg    = None  # Mensagem atualmente em processamento
 
-        # socket UDP
+        # Cria e configura o socket UDP
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("", self.listen_port))
 
-        # threads
+        # Threads principais do nó
         self.receiver_thread      = threading.Thread(target=self.receiver_loop,      daemon=True)
         self.user_thread          = threading.Thread(target=self.user_loop,          daemon=True)
         self.token_monitor_thread = threading.Thread(target=self.token_monitor_loop, daemon=True)
 
-        # controle de token
-        self.ultimo_token  = time.time()
-        self.token_timeout = 30
-        self.token_gerado  = False
+        # Controle do token
+        self.ultimo_token  = time.time()  # Última vez que o token passou
+        self.token_timeout = 30           # Tempo limite para considerar token perdido
+        self.token_gerado  = False        # Flag para evitar múltiplos tokens
 
-        # peers (apenas nomes, para broadcast)
+        # Lista de peers (apelidos dos outros nós, para broadcast)
         self.peers = []
         self.discover_peers()
 
     def read_config(self, config_file):
-        """Lê 4 linhas:
-           1. ip:porta do próximo
-           2. apelido
-           3. tempo_token (s)
-           4. gera_token_inicial (true|false)
+        """Lê o arquivo de configuração do nó.
+        Formato:
+        1. ip:porta do próximo nó
+        2. apelido do nó
+        3. tempo do token (s)
+        4. se gera o token inicial (true|false)
         """
         with open(config_file, 'r') as f:
             lines = [l.strip() for l in f if l.strip()]
@@ -63,6 +68,7 @@ class RingNode:
         self.is_token_creator = lines[3].lower() == 'true'
 
     def discover_peers(self):
+        """Descobre os peers lendo todos os arquivos de configuração na pasta."""
         cfg_dir = os.path.dirname(__file__)
         for fn in os.listdir(cfg_dir):
             if fn.startswith("config_") and fn.endswith(".txt"):
@@ -72,13 +78,15 @@ class RingNode:
                     self.peers.append(lns[1])
 
     def receiver_loop(self):
+        """Thread principal de recepção de pacotes UDP."""
         while self.running:
             try:
                 data, _ = self.sock.recvfrom(4096)
                 msg = data.decode(errors='ignore')
                 if msg == TOKEN_MSG:
+                    # Verifica token duplicado (chegou cedo demais)
                     tempo_desde_ultimo = time.time() - self.ultimo_token
-                    if tempo_desde_ultimo < self.token_time * 0.8:  # ou outro fator de segurança
+                    if tempo_desde_ultimo < self.token_time * 0.8:  # Fator de segurança
                         print(f"[ALERTA] Token duplicado detectado! Ignorando token recebido cedo demais.")
                         continue  # descarta o token extra
                     self.ultimo_token = time.time()
@@ -91,6 +99,7 @@ class RingNode:
                 pass
 
     def user_loop(self):
+        """Thread para leitura de comandos do usuário (input de mensagens)."""
         while self.running:
             try:
                 linha = input().strip()
@@ -103,7 +112,8 @@ class RingNode:
             except:
                 pass
 
-    def inserir_falha(self, mensagem, prob=0.2):
+    def inserir_falha(self, mensagem, prob=0.0):
+        """Insere falha aleatória na mensagem com probabilidade 'prob'."""
         if random.random() < prob and mensagem:
             i = random.randint(0, len(mensagem)-1)
             c = chr((ord(mensagem[i]) + 1) % 256)
@@ -111,11 +121,11 @@ class RingNode:
         return mensagem
 
     def handle_token(self):
-        # delay após receber token
+        """Processa o token recebido: envia mensagem, retransmite ou repassa token."""
         print(f"[TOKEN] aguardando {self.token_time}s...")
         time.sleep(self.token_time)
 
-        # retransmissão de NACK pendente
+        # Retransmissão de NACK pendente (apenas uma vez)
         if self.retransmit and not self.retransmit_done:
             dest, msg = self.retransmit
             crc = zlib.crc32(msg.encode())
@@ -140,7 +150,7 @@ class RingNode:
             print(f"[TOKEN] repassado por {self.nickname}")
             return
 
-        # nova mensagem da fila?
+        # Nova mensagem da fila?
         if self.current_msg is None and not self.msg_queue.empty() and not self.awaiting_ack:
             self.current_msg = self.msg_queue.queue[0]  # Pega a próxima mensagem sem remover
 
@@ -150,6 +160,7 @@ class RingNode:
             time.sleep(self.data_time)
 
             if dest == "TODOS":
+                # Broadcast: envia para cada peer
                 for peer in self.peers:
                     crc = zlib.crc32(msg.encode())
                     msg_falha = self.inserir_falha(msg)
@@ -161,29 +172,34 @@ class RingNode:
                 self.current_msg = None
                 return
 
+            # Unicast normal
             crc = zlib.crc32(msg.encode())
             msg_falha = self.inserir_falha(msg)
             pkt = f"{DATA_MSG_PREFIX}naoexiste;{self.nickname};{dest};{crc};{msg_falha}"
             self.sock.sendto(pkt.encode(), (self.next_ip, self.next_port))
             print(f"[DADOS] enviado: {pkt}")
             self.awaiting_ack  = True
-            # self.last_sent_msg = (dest, msg)  # Não precisa mais
             return
 
-        # sem nada p/ fazer: repassa token
+        # Sem nada p/ fazer: repassa token
         time.sleep(5)
         self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
         print(f"[TOKEN] repassado por {self.nickname}")
 
     def handle_data(self, msg):
+        """Processa pacotes de dados recebidos."""
         # msg = "7777:status;origem;destino;crc;texto"
         payload = msg[len(DATA_MSG_PREFIX):]
         status, origem, destino, crc, texto = payload.split(";", 4)
         crc_calc = str(zlib.crc32(texto.encode()))
 
+        # Log para visualizar mensagens broadcast (TODOS) em nós intermediários
+        if destino != self.nickname and origem != self.nickname and status == "naoexiste":
+            print(f"[BROADCAST-VISUALIZADO] {self.nickname} viu broadcast de {origem} para TODOS: {texto}")
+
         # 1) Pacote não é para mim?
         if destino != self.nickname:
-            # detectar timeout de dest que não existe
+            # Detectar timeout de destinatário que não existe
             if origem == self.nickname and status == "naoexiste":
                 print(f"[FALHA] destinatário '{destino}' não existe ou está offline. Pacote: {msg}")
                 self.awaiting_ack  = False
@@ -193,20 +209,21 @@ class RingNode:
                     self.current_msg = None
                 self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
                 return
-            # só repassa adiante
+            # Só repassa adiante
+            print(f"[REPASSANDO] {msg}")
             self.sock.sendto(msg.encode(), (self.next_ip, self.next_port))
             return
 
-        # 2) Chegou em mim
+        # 2) Chegou em mim (destinatário)
         if status == "naoexiste":
-            # entrega inicial
+            # Entrega inicial
             if crc != crc_calc:
                 print(f"[ERRO] CRC inválido! Esperado {crc_calc}, recebido {crc}. Pacote: {msg}")
                 status2 = "NACK"
             else:
                 print(f"[RECEBIDA] {msg}")
                 status2 = "ACK"
-            # envia retorno (origem/destino trocados)
+            # Envia retorno (origem/destino trocados)
             retorno = f"{DATA_MSG_PREFIX}{status2};{self.nickname};{origem};{crc_calc};{texto}"
             self.sock.sendto(retorno.encode(), (self.next_ip, self.next_port))
             print(f"[RETORNO] enviado: {retorno}")
@@ -227,10 +244,11 @@ class RingNode:
             self.awaiting_ack  = False
             self.last_sent_msg = None
 
-        # após processar retorno, libera token
+        # Após processar retorno, libera token
         self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
 
     def token_monitor_loop(self):
+        """Thread que monitora o token: só o nó criador pode gerar novo token se perdido."""
         while self.running:
             if not self.is_token_creator:
                 time.sleep(1)
@@ -243,6 +261,7 @@ class RingNode:
             time.sleep(1)
 
     def start(self):
+        """Inicia as threads e o funcionamento do nó."""
         print("=== INICIANDO NÓ ===")
         print(f"{self.nickname} | porta {self.listen_port} | próximo {self.next_ip}:{self.next_port}")
         print(f"Peers: {self.peers}")

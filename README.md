@@ -1,56 +1,109 @@
-# Protocolo de Comunicação Distribuída
+# Trabalho Final - Redes de Computadores
 
-Este projeto implementa um protocolo de comunicação customizado sobre UDP para descoberta e comunicação entre dispositivos em uma rede local.
+## Simulação de Rede em Anel com Token e CRC
+
+Este projeto implementa uma rede local em anel, simulando o envio de mensagens entre máquinas usando o protocolo UDP, controle por token, detecção de erros com CRC32 e retransmissão automática.
+
+---
+
+## Objetivo
+
+- Simular o funcionamento de uma rede em anel, onde apenas quem possui o token pode transmitir mensagens.
+- Implementar fila de mensagens, controle de token, broadcast, retransmissão, detecção de destinatário inexistente e visualização do caminho dos pacotes.
+
+---
+
+## Estrutura dos Arquivos de Configuração
+
+Cada nó deve ter um arquivo de configuração no formato:
+
+```
+<ip_destino_do_token>:<porta>
+<apelido_da_maquina>
+<tempo_token_em_segundos>
+<gera_token_inicial: true|false>
+```
+
+**Exemplo:**
+```
+127.0.0.1:6002
+Giovana
+1
+true
+```
+
+---
+
+## Como Rodar
+
+1. **Abra três terminais** (um para cada nó).
+2. Execute em cada terminal, trocando o arquivo de configuração e a porta conforme o nó:
+
+```
+python src/ring_node.py src/config_Giovana.txt 6001
+python src/ring_node.py src/config_Samara.txt 6000
+python src/ring_node.py src/config_Mykelly.txt 6002
+```
+
+3. **Envie mensagens** digitando no terminal:
+   - Para um nó específico:
+     ```
+     Samara Olá, Samara!
+     ```
+   - Para todos (broadcast):
+     ```
+     TODOS Olá, grupo!
+     ```
+
+---
+
+## Como Encerrar Todos os Nós Rapidamente
+
+Se quiser encerrar todos os processos Python (todos os nós) de uma vez, use o comando:
+
+```
+pkill -f python
+```
+
+Isso é útil para finalizar rapidamente todos os terminais abertos durante os testes.
+
+---
 
 ## Funcionalidades
 
-- Descoberta automática de dispositivos na rede
-- Envio de mensagens entre dispositivos
-- Transferência de arquivos com confiabilidade
-- Interface de linha de comando interativa
+- **Token:** Apenas quem possui o token pode enviar mensagens.
+- **Fila:** Cada nó possui uma fila de até 10 mensagens.
+- **Unicast e Broadcast:** Envio para um destino ou para todos.
+- **Controle de erro:** CRC32 e módulo de inserção de falhas.
+- **Retransmissão:** Mensagem retransmitida apenas uma vez após NACK.
+- **Detecção de destinatário inexistente:** Mensagem removida da fila e aviso ao usuário.
+- **Token perdido/duplicado:** Só o nó criador gera novo token; tokens duplicados são descartados.
+- **Visualização:** Prints mostram o caminho dos pacotes, retransmissões, fila cheia, etc.
 
-## Requisitos
+---
 
-- Python 3.8 ou superior
-- Dependências listadas em `requirements.txt`
+## Exemplos de Prints
 
-## Instalação
+- `[DADOS] enviado: 7777:naoexiste;Giovana;Samara;...;Mensagem 1`
+- `[REPASSANDO] 7777:naoexiste;Giovana;Samara;...;Mensagem 1`
+- `[RECEBIDA] 7777:naoexiste;Giovana;Samara;...;Mensagem 1`
+- `[RETORNO] enviado: 7777:ACK;Samara;Giovana;...;Mensagem 1`
+- `[CONFIRMADA] 7777:ACK;Samara;Giovana;...;Mensagem 1`
+- `[BROADCAST-VISUALIZADO] Mykelly viu broadcast de Giovana para TODOS: Olá, grupo!`
+- `[FILA] cheia, descartei mensagem.`
+- `[FALHA] destinatário 'Fulano' não existe ou está offline. Pacote: ...`
+- `[ALERTA] Token duplicado detectado! Ignorando token recebido cedo demais.`
+- `[ALERTA] Token perdido! Gerando novo token...`
 
-1. Clone o repositório
-2. Instale as dependências:
-```bash
-pip install -r requirements.txt
-```
+---
 
-## Uso
+## Observações
 
-Para iniciar um dispositivo:
+- O sistema foi testado com 3 nós, mas pode ser expandido para mais.
+- O código está comentado para facilitar a compreensão e avaliação.
+- Para simular falhas, ajuste o parâmetro `prob` na função `inserir_falha`.
+- Para dúvidas ou sugestões, consulte o arquivo `definicao_trabalho.txt` ou os comentários no código.
 
-```bash
-python src/main.py <nome_do_dispositivo>
-```
+---
 
-Comandos disponíveis:
-- `devices` - Lista os dispositivos ativos na rede
-- `talk <nome> <mensagem>` - Envia uma mensagem para um dispositivo
-- `sendfile <nome> <arquivo>` - Envia um arquivo para um dispositivo
-- `help` - Mostra a ajuda
-- `exit` - Encerra o programa
-
-## Protocolo
-
-O protocolo implementa os seguintes tipos de mensagens:
-
-- HEARTBEAT: Para descoberta de dispositivos
-- TALK: Para comunicação entre dispositivos
-- FILE: Para iniciar transferência de arquivos
-- CHUNK: Para transferência de blocos de arquivos
-- END: Para finalizar transferência de arquivos
-- ACK: Para confirmação de recebimento
-- NACK: Para indicar erro no processamento
-
-## Estrutura do Projeto
-
-- `src/device.py`: Implementação do protocolo e lógica do dispositivo
-- `src/main.py`: Interface de linha de comando
-- `tests/`: Testes do projeto 
+**Desenvolvido para o Trabalho Final de Redes de Computadores.** 
