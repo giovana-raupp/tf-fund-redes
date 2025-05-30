@@ -8,215 +8,256 @@ import os
 
 TOKEN_MSG = "9000"
 DATA_MSG_PREFIX = "7777:"
+# ---------------------------------------------------
+# Tempo (em segundos) que cada nó "segura" um pacote
+DEFAULT_DATA_TIME = 2
+# ---------------------------------------------------
 
 class RingNode:
     def __init__(self, config_file, listen_port):
+        # lê config de 4 linhas
         self.read_config(config_file)
-        self.listen_port = listen_port
-        self.msg_queue = queue.Queue(maxsize=10)
-        self.running = True
+        # tempo de dados fixo
+        self.data_time      = DEFAULT_DATA_TIME
+        self.listen_port    = listen_port
+        self.msg_queue      = queue.Queue(maxsize=10)
+        self.running        = True
+        self.awaiting_ack   = False
+        self.last_sent_msg  = None
+        self.retransmit     = None
+        self.retransmit_done = False
+        self.current_msg    = None  # Armazena a mensagem em processamento
+
+        # socket UDP
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("", self.listen_port))
-        self.receiver_thread = threading.Thread(target=self.receiver_loop, daemon=True)
-        self.user_thread = threading.Thread(target=self.user_loop, daemon=True)
-        self.awaiting_ack = False
-        self.last_sent_msg = None
-        self.peers = []
-        self.ultimo_token = time.time()  # Marca o tempo do último token recebido
-        self.token_timeout = 30  # Timeout em segundos para considerar o token perdido
+
+        # threads
+        self.receiver_thread      = threading.Thread(target=self.receiver_loop,      daemon=True)
+        self.user_thread          = threading.Thread(target=self.user_loop,          daemon=True)
         self.token_monitor_thread = threading.Thread(target=self.token_monitor_loop, daemon=True)
-        self.token_gerado = False  # Para evitar múltiplos tokens
+
+        # controle de token
+        self.ultimo_token  = time.time()
+        self.token_timeout = 30
+        self.token_gerado  = False
+
+        # peers (apenas nomes, para broadcast)
+        self.peers = []
+        self.discover_peers()
 
     def read_config(self, config_file):
+        """Lê 4 linhas:
+           1. ip:porta do próximo
+           2. apelido
+           3. tempo_token (s)
+           4. gera_token_inicial (true|false)
+        """
         with open(config_file, 'r') as f:
-            lines = [line.strip() for line in f.readlines() if line.strip()]
-        # <ip_destino_do_token>:porta
-        ip_port = lines[0].split(":")
-        self.next_ip = ip_port[0]
-        self.next_port = int(ip_port[1])
-        self.nickname = lines[1]
-        self.token_time = int(lines[2])
+            lines = [l.strip() for l in f if l.strip()]
+        ip, port = lines[0].split(":")
+        self.next_ip          = ip
+        self.next_port        = int(port)
+        self.nickname         = lines[1]
+        self.token_time       = int(lines[2])
         self.is_token_creator = lines[3].lower() == 'true'
+
+    def discover_peers(self):
+        cfg_dir = os.path.dirname(__file__)
+        for fn in os.listdir(cfg_dir):
+            if fn.startswith("config_") and fn.endswith(".txt"):
+                with open(os.path.join(cfg_dir, fn)) as f:
+                    lns = [l.strip() for l in f if l.strip()]
+                if len(lns) >= 2 and lns[1] != self.nickname:
+                    self.peers.append(lns[1])
 
     def receiver_loop(self):
         while self.running:
             try:
-                data, addr = self.sock.recvfrom(4096)
+                data, _ = self.sock.recvfrom(4096)
                 msg = data.decode(errors='ignore')
                 if msg == TOKEN_MSG:
-                    self.ultimo_token = time.time()  # Atualiza o tempo do último token recebido
-                    self.token_gerado = False        # Permite gerar novo token se sumir de novo
-                    print("[TOKEN] Token recebido!")
+                    tempo_desde_ultimo = time.time() - self.ultimo_token
+                    if tempo_desde_ultimo < self.token_time * 0.8:  # ou outro fator de segurança
+                        print(f"[ALERTA] Token duplicado detectado! Ignorando token recebido cedo demais.")
+                        continue  # descarta o token extra
+                    self.ultimo_token = time.time()
+                    self.token_gerado  = False
+                    print(f"[TOKEN] recebido em {self.nickname}")
                     self.handle_token()
                 elif msg.startswith(DATA_MSG_PREFIX):
-                    self.handle_data_message(msg)
-                elif msg.startswith("ACK;"):
-                    self.handle_ack(msg)
-                elif msg.startswith("NACK;"):
-                    self.handle_nack(msg)
-            except Exception as e:
-                if self.running:
-                    pass  # Silencia erros de recepção
+                    self.handle_data(msg)
+            except:
+                pass
 
     def user_loop(self):
         while self.running:
             try:
-                entrada = input()
-                if not entrada.strip():
-                    continue
-                parts = entrada.strip().split(' ', 1)
-                if len(parts) != 2:
-                    continue
-                destino, mensagem = parts
+                linha = input().strip()
+                if not linha: continue
+                dest, texto = linha.split(" ", 1)
                 if self.msg_queue.full():
-                    continue
+                    print("[FILA] cheia, descartei mensagem.")
                 else:
-                    self.msg_queue.put((destino, mensagem))
-            except Exception as e:
-                pass  # Silencia erros de entrada do usuário
+                    self.msg_queue.put((dest, texto))
+            except:
+                pass
 
     def inserir_falha(self, mensagem, prob=0.2):
-        """Com probabilidade 'prob', altera um caractere aleatório da mensagem."""
-        if random.random() < prob and len(mensagem) > 0:
-            idx = random.randint(0, len(mensagem)-1)
-            # Troca o caractere por outro qualquer
-            novo_char = chr((ord(mensagem[idx]) + 1) % 256)
-            return mensagem[:idx] + novo_char + mensagem[idx+1:]
+        if random.random() < prob and mensagem:
+            i = random.randint(0, len(mensagem)-1)
+            c = chr((ord(mensagem[i]) + 1) % 256)
+            return mensagem[:i] + c + mensagem[i+1:]
         return mensagem
 
     def handle_token(self):
-        # Retransmissão após NACK
-        if hasattr(self, 'retransmitir') and self.retransmitir:
-            destino, mensagem = self.retransmitir
-            crc = zlib.crc32(mensagem.encode())
-            pacote = f"{DATA_MSG_PREFIX}naoexiste;{self.nickname};{destino};{crc};{mensagem}"
-            # Não insere falha na retransmissão
-            self.sock.sendto(pacote.encode(), (self.next_ip, self.next_port))
+        # delay após receber token
+        print(f"[TOKEN] aguardando {self.token_time}s...")
+        time.sleep(self.token_time)
+
+        # retransmissão de NACK pendente
+        if self.retransmit and not self.retransmit_done:
+            dest, msg = self.retransmit
+            crc = zlib.crc32(msg.encode())
+            pkt = f"{DATA_MSG_PREFIX}naoexiste;{self.nickname};{dest};{crc};{msg}"
+            self.sock.sendto(pkt.encode(), (self.next_ip, self.next_port))
+            print(f"[RETRANSMISSÃO] enviado: {pkt}")
             self.awaiting_ack = True
-            self.last_sent_msg = pacote
-            print(f"[RETRANSMISSÃO] Mensagem para {destino} retransmitida.")
-            self.retransmitir = None
+            self.retransmit_done = True  # Marca que já retransmitiu uma vez
+            self.current_msg = (dest, msg)  # Mantém a mensagem até confirmação
             return
-        if not self.msg_queue.empty() and not self.awaiting_ack:
-            destino, mensagem = self.msg_queue.get()
-            # Broadcast para TODOS
-            if destino == "TODOS":
-                # Envia para todos os nós do anel, exceto si mesmo
-                for peer in self.peers:
-                    if peer != self.nickname:
-                        msg_broadcast = f"{DATA_MSG_PREFIX}naoexiste;{self.nickname};{peer};0;{mensagem}"
-                        # Insere falha
-                        mensagem_falha = self.inserir_falha(mensagem)
-                        crc = zlib.crc32(mensagem_falha.encode())
-                        pacote = f"{DATA_MSG_PREFIX}naoexiste;{self.nickname};{peer};{crc};{mensagem_falha}"
-                        self.sock.sendto(pacote.encode(), (self.next_ip, self.next_port))
-                self.awaiting_ack = True
-                self.last_sent_msg = None
-                print(f"[BROADCAST] Mensagem enviada para TODOS.")
-                return
-            # Insere falha na mensagem com probabilidade
-            mensagem_falha = self.inserir_falha(mensagem)
-            crc = zlib.crc32(mensagem_falha.encode())
-            pacote = f"{DATA_MSG_PREFIX}naoexiste;{self.nickname};{destino};{crc};{mensagem_falha}"
-            self.sock.sendto(pacote.encode(), (self.next_ip, self.next_port))
-            self.awaiting_ack = True
-            self.last_sent_msg = (destino, mensagem)
-        elif not self.awaiting_ack:
-            time.sleep(5)  # Delay de 5 segundos antes de repassar o token
+        elif self.retransmit and self.retransmit_done:
+            print(f"[DESCARTADA] Mensagem '{msg}' para {dest} após segunda falha (NACK duplo).")
+            self.retransmit = None
+            self.retransmit_done = False
+            self.awaiting_ack = False
+            self.current_msg = None
+            if not self.msg_queue.empty():
+                self.msg_queue.get()  # Remove da fila
+            # Libera o token normalmente
+            time.sleep(5)
             self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
+            print(f"[TOKEN] repassado por {self.nickname}")
+            return
 
-    def handle_data_message(self, msg):
-        try:
-            payload = msg[len(DATA_MSG_PREFIX):]
-            campos = payload.split(';', 4)
-            if len(campos) != 5:
-                return
-            status, origem, destino, crc, mensagem = campos
-            crc_calculado = str(zlib.crc32(mensagem.encode()))
-            if destino == self.nickname:
-                if status == "naoexiste" and origem == self.nickname:
-                    print(f"[FALHA] Mensagem para {destino} não foi entregue. Destinatário não existe ou está offline.")
-                    return
-                if crc != crc_calculado:
-                    print(f"[ERRO] CRC inválido! Esperado {crc_calculado}, recebido {crc}. Enviando NACK.")
-                    nack_msg = f"NACK;{origem};{self.nickname};{mensagem}"
-                    self.sock.sendto(nack_msg.encode(), (self.next_ip, self.next_port))
-                else:
-                    print(f"[RECEBIDA] Mensagem de {origem}: {mensagem}")
-                    ack_msg = f"ACK;{origem};{self.nickname};{mensagem}"
-                    self.sock.sendto(ack_msg.encode(), (self.next_ip, self.next_port))
-            else:
-                # Se a mensagem der a volta e voltar para a origem com status 'naoexiste'
-                if status == "naoexiste" and origem == self.nickname:
-                    print(f"[FALHA] Mensagem para {destino} não foi entregue. Destinatário não existe ou está offline.")
-                    return
-                self.sock.sendto(msg.encode(), (self.next_ip, self.next_port))
-        except Exception as e:
-            pass
+        # nova mensagem da fila?
+        if self.current_msg is None and not self.msg_queue.empty() and not self.awaiting_ack:
+            self.current_msg = self.msg_queue.queue[0]  # Pega a próxima mensagem sem remover
 
-    def handle_ack(self, msg):
-        try:
-            _, origem, destino, mensagem = msg.split(';', 3)
-            if origem == self.nickname:
-                print(f"[CONFIRMADA] Sua mensagem '{mensagem}' foi recebida por {destino}!")
-                self.awaiting_ack = False
-                self.last_sent_msg = None
+        if self.current_msg and not self.awaiting_ack:
+            dest, msg = self.current_msg
+            print(f"[DADOS] preparando para {dest}, aguardando {self.data_time}s...")
+            time.sleep(self.data_time)
+
+            if dest == "TODOS":
+                for peer in self.peers:
+                    crc = zlib.crc32(msg.encode())
+                    msg_falha = self.inserir_falha(msg)
+                    pkt = f"{DATA_MSG_PREFIX}naoexiste;{self.nickname};{peer};{crc};{msg_falha}"
+                    self.sock.sendto(pkt.encode(), (self.next_ip, self.next_port))
+                    print(f"[BROADCAST] enviado: {pkt}")
                 self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
-            else:
-                self.sock.sendto(msg.encode(), (self.next_ip, self.next_port))
-        except Exception as e:
-            pass
+                self.msg_queue.get()  # Remove a mensagem da fila após broadcast
+                self.current_msg = None
+                return
 
-    def handle_nack(self, msg):
-        try:
-            _, origem, destino, mensagem = msg.split(';', 3)
-            if origem == self.nickname:
-                print(f"[NACK] Sua mensagem '{mensagem}' foi recebida com erro por {destino}! Será retransmitida uma vez.")
-                # Marca para retransmitir na próxima passagem do token
-                self.retransmitir = (destino, mensagem)
-                self.awaiting_ack = False
+            crc = zlib.crc32(msg.encode())
+            msg_falha = self.inserir_falha(msg)
+            pkt = f"{DATA_MSG_PREFIX}naoexiste;{self.nickname};{dest};{crc};{msg_falha}"
+            self.sock.sendto(pkt.encode(), (self.next_ip, self.next_port))
+            print(f"[DADOS] enviado: {pkt}")
+            self.awaiting_ack  = True
+            # self.last_sent_msg = (dest, msg)  # Não precisa mais
+            return
+
+        # sem nada p/ fazer: repassa token
+        time.sleep(5)
+        self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
+        print(f"[TOKEN] repassado por {self.nickname}")
+
+    def handle_data(self, msg):
+        # msg = "7777:status;origem;destino;crc;texto"
+        payload = msg[len(DATA_MSG_PREFIX):]
+        status, origem, destino, crc, texto = payload.split(";", 4)
+        crc_calc = str(zlib.crc32(texto.encode()))
+
+        # 1) Pacote não é para mim?
+        if destino != self.nickname:
+            # detectar timeout de dest que não existe
+            if origem == self.nickname and status == "naoexiste":
+                print(f"[FALHA] destinatário '{destino}' não existe ou está offline. Pacote: {msg}")
+                self.awaiting_ack  = False
                 self.last_sent_msg = None
+                if self.current_msg:
+                    self.msg_queue.get()  # Remove a mensagem da fila após falha
+                    self.current_msg = None
+                self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
+                return
+            # só repassa adiante
+            self.sock.sendto(msg.encode(), (self.next_ip, self.next_port))
+            return
+
+        # 2) Chegou em mim
+        if status == "naoexiste":
+            # entrega inicial
+            if crc != crc_calc:
+                print(f"[ERRO] CRC inválido! Esperado {crc_calc}, recebido {crc}. Pacote: {msg}")
+                status2 = "NACK"
             else:
-                self.sock.sendto(msg.encode(), (self.next_ip, self.next_port))
-        except Exception as e:
-            pass
+                print(f"[RECEBIDA] {msg}")
+                status2 = "ACK"
+            # envia retorno (origem/destino trocados)
+            retorno = f"{DATA_MSG_PREFIX}{status2};{self.nickname};{origem};{crc_calc};{texto}"
+            self.sock.sendto(retorno.encode(), (self.next_ip, self.next_port))
+            print(f"[RETORNO] enviado: {retorno}")
+            return
+
+        # 3) Retorno de ACK/NACK para o originador
+        if status == "ACK":
+            print(f"[CONFIRMADA] {msg}")
+            self.awaiting_ack  = False
+            self.last_sent_msg = None
+            if self.current_msg:
+                self.msg_queue.get()  # Remove a mensagem da fila após ACK
+                self.current_msg = None
+        else:  # NACK
+            print(f"[NACK] {msg} será retransmitida.")
+            self.retransmit    = (origem, texto)
+            self.retransmit_done = False
+            self.awaiting_ack  = False
+            self.last_sent_msg = None
+
+        # após processar retorno, libera token
+        self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
 
     def token_monitor_loop(self):
         while self.running:
+            if not self.is_token_creator:
+                time.sleep(1)
+                continue
             if (time.time() - self.ultimo_token > self.token_timeout) and not self.token_gerado:
-                print('[ALERTA] Token perdido! Gerando novo token...')
+                print("[ALERTA] Token perdido! Gerando novo token...")
                 self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
                 self.ultimo_token = time.time()
-                self.token_gerado = True  # Evita gerar múltiplos tokens
+                self.token_gerado  = True
             time.sleep(1)
 
     def start(self):
-        # Monta a lista de peers automaticamente lendo os arquivos de configuração
-        config_dir = os.path.dirname(__file__)
-        arquivos = [f for f in os.listdir(config_dir) if f.startswith('config_') and f.endswith('.txt')]
-        peers = []
-        for arq in arquivos:
-            with open(os.path.join(config_dir, arq), 'r') as f:
-                linhas = [linha.strip() for linha in f.readlines() if linha.strip()]
-                if len(linhas) >= 2:
-                    nickname = linhas[1]
-                    if nickname != self.nickname:
-                        peers.append(nickname)
-        self.peers = peers
-        print("==== INICIANDO NÓ ====")
-        print(f"Apelido: {self.nickname}")
-        print(f"Escutando na porta: {self.listen_port}")
-        print(f"Enviando para: {self.next_ip}:{self.next_port}")
-        print(f"Peers detectados: {self.peers}")
-        print("======================")
+        print("=== INICIANDO NÓ ===")
+        print(f"{self.nickname} | porta {self.listen_port} | próximo {self.next_ip}:{self.next_port}")
+        print(f"Peers: {self.peers}")
+        print("====================")
+
         self.receiver_thread.start()
         self.user_thread.start()
         self.token_monitor_thread.start()
+
         if self.is_token_creator:
-            print("Aguardando 10 segundos antes de enviar o token inicial... (adicione sua mensagem agora!)")
+            print(f"[TOKEN] aguardando 10s antes do inicial...")
             time.sleep(10)
             self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
-            print("[TOKEN] Token inicial enviado!")
+            print("[TOKEN] inicial enviado!")
+
         try:
             while self.running:
                 time.sleep(1)
@@ -224,4 +265,12 @@ class RingNode:
             print("Encerrando...")
             self.running = False
         finally:
-            self.sock.close() 
+            self.sock.close()
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) != 3:
+        print("Uso: python ring_node.py <config.txt> <porta>")
+        sys.exit(1)
+    node = RingNode(sys.argv[1], int(sys.argv[2]))
+    node.start()
