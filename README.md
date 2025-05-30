@@ -95,15 +95,14 @@ Isso é útil para finalizar rapidamente todos os terminais abertos durante os t
 - `[ALERTA] Token duplicado detectado! Ignorando token recebido cedo demais.`
 - `[ALERTA] Token perdido! Gerando novo token...`
 
----
+---   
 
 ## Observações
 
 - O sistema foi testado com 3 nós, mas pode ser expandido para mais.
-- O código está comentado para facilitar a compreensão e avaliação.
 - Para simular falhas, ajuste o parâmetro `prob` na função `inserir_falha`.
-- Para dúvidas ou sugestões, consulte o arquivo `definicao_trabalho.txt` ou os comentários no código.
-
+- Falta comentar o código e testar entre 3 máquinas.
+  
 ---
 
 **Desenvolvido para o Trabalho Final de Redes de Computadores.** 
