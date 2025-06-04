@@ -1,1 +1,4 @@
-python-dateutil>=2.8.2 
+# Requisitos do projeto
+python-dateutil>=2.8.2
+# O projeto requer Python 3.6 ou superior
+# Todas as demais dependências são da biblioteca padrão do Python 
