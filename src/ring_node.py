@@ -34,6 +34,7 @@ class RingNode:
 
         # Cria e configura o socket UDP
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)  # Permite broadcast
         self.sock.bind(("", self.listen_port))
 
         # Threads principais do nó
@@ -160,13 +161,12 @@ class RingNode:
             time.sleep(self.data_time)
 
             if dest == "TODOS":
-                # Broadcast: envia para cada peer
-                for peer in self.peers:
-                    crc = zlib.crc32(msg.encode())
-                    msg_falha = self.inserir_falha(msg)
-                    pkt = f"{DATA_MSG_PREFIX}naoexiste;{self.nickname};{peer};{crc};{msg_falha}"
-                    self.sock.sendto(pkt.encode(), (self.next_ip, self.next_port))
-                    print(f"[BROADCAST] enviado: {pkt}")
+                # Broadcast UDP real: envia para o endereço de broadcast
+                crc = zlib.crc32(msg.encode())
+                msg_falha = self.inserir_falha(msg)
+                pkt = f"{DATA_MSG_PREFIX}naoexiste;{self.nickname};TODOS;{crc};{msg_falha}"
+                self.sock.sendto(pkt.encode(), ("255.255.255.255", self.listen_port))
+                print(f"[BROADCAST] enviado: {pkt}")
                 self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
                 self.msg_queue.get()  # Remove a mensagem da fila após broadcast
                 self.current_msg = None
@@ -198,7 +198,7 @@ class RingNode:
             print(f"[BROADCAST-VISUALIZADO] {self.nickname} viu broadcast de {origem} para TODOS: {texto}")
 
         # 1) Pacote não é para mim?
-        if destino != self.nickname:
+        if destino != self.nickname and destino != "TODOS":
             # Detectar timeout de destinatário que não existe
             if origem == self.nickname and status == "naoexiste":
                 print(f"[FALHA] destinatário '{destino}' não existe ou está offline. Pacote: {msg}")
