@@ -224,9 +224,13 @@ class RingNode:
             if crc != crc_calc:
                 print(f"[ERRO] CRC inválido! Esperado {crc_calc}, recebido {crc}. Pacote: {msg}")
                 status2 = "NACK"
-            else:
+            elif crc == crc_calc:
                 print(f"[RECEBIDA] {msg}")
                 status2 = "ACK"
+            elif destino == "TODOS":
+                print(f"[RECEBIDA] {msg}")
+                status2 = "naoexiste"
+
             # Envia retorno (origem/destino trocados)
             retorno = f"{DATA_MSG_PREFIX}{status2};{self.nickname};{origem};{crc_calc};{texto}"
             self.sock.sendto(retorno.encode(), (self.next_ip, self.next_port))
