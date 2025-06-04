@@ -37,19 +37,20 @@ class RingNode:
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)  # Permite broadcast
         self.sock.bind(("", self.listen_port))
 
-        # Threads principais do nó
+        # Cria a thread responsável por receber mensagens da rede (escuta o socket UDP)
         self.receiver_thread      = threading.Thread(target=self.receiver_loop,      daemon=True)
+        # Cria a thread responsável por ler comandos do usuário (input do terminal)
         self.user_thread          = threading.Thread(target=self.user_loop,          daemon=True)
+        # Cria a thread responsável por monitorar o token e gerar um novo se necessário
         self.token_monitor_thread = threading.Thread(target=self.token_monitor_loop, daemon=True)
 
         # Controle do token
         self.ultimo_token  = time.time()  # Última vez que o token passou
-        self.token_timeout = 30           # Tempo limite para considerar token perdido
+        self.token_timeout = 30          # Tempo limite para considerar token perdido
         self.token_gerado  = False        # Flag para evitar múltiplos tokens
 
         # Lista de peers (apelidos dos outros nós, para broadcast)
-        self.peers = []
-        self.discover_peers()
+        # self.discover_peers()  # Comentado pois não estamos mais utilizando a lista de peers
 
     def read_config(self, config_file):
         """Lê o arquivo de configuração do nó.
@@ -68,15 +69,15 @@ class RingNode:
         self.token_time       = int(lines[2])
         self.is_token_creator = lines[3].lower() == 'true'
 
-    def discover_peers(self):
-        """Descobre os peers lendo todos os arquivos de configuração na pasta."""
-        cfg_dir = os.path.dirname(__file__)
-        for fn in os.listdir(cfg_dir):
-            if fn.startswith("config_") and fn.endswith(".txt"):
-                with open(os.path.join(cfg_dir, fn)) as f:
-                    lns = [l.strip() for l in f if l.strip()]
-                if len(lns) >= 2 and lns[1] != self.nickname:
-                    self.peers.append(lns[1])
+    # def discover_peers(self):
+    #     """Descobre os peers lendo todos os arquivos de configuração na pasta."""
+    #     cfg_dir = os.path.dirname(__file__)
+    #     for fn in os.listdir(cfg_dir):
+    #         if fn.startswith("config_") and fn.endswith(".txt"):
+    #             with open(os.path.join(cfg_dir, fn)) as f:
+    #                 lns = [l.strip() for l in f if l.strip()]
+    #             if len(lns) >= 2 and lns[1] != self.nickname:
+    #                 self.peers.append(lns[1])
 
     def receiver_loop(self):
         """Thread principal de recepção de pacotes UDP."""
@@ -161,14 +162,13 @@ class RingNode:
             time.sleep(self.data_time)
 
             if dest == "TODOS":
-                # Broadcast UDP real: envia para o endereço de broadcast
+                # Envia a mensagem para o próximo nó do anel, não via broadcast UDP
                 crc = zlib.crc32(msg.encode())
                 msg_falha = self.inserir_falha(msg)
                 pkt = f"{DATA_MSG_PREFIX}naoexiste;{self.nickname};TODOS;{crc};{msg_falha}"
-                self.sock.sendto(pkt.encode(), ("255.255.255.255", self.listen_port))
-                print(f"[BROADCAST] enviado: {pkt}")
-                self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
-                self.msg_queue.get()  # Remove a mensagem da fila após broadcast
+                self.sock.sendto(pkt.encode(), (self.next_ip, self.next_port))
+                print(f"[DADOS-ANEL-TODOS] enviado para {self.next_ip}:{self.next_port}: {pkt}")
+                self.msg_queue.get()  # Remove a mensagem da fila após envio
                 self.current_msg = None
                 return
 
@@ -194,7 +194,7 @@ class RingNode:
         crc_calc = str(zlib.crc32(texto.encode()))
 
         # Log para visualizar mensagens broadcast (TODOS) em nós intermediários
-        if destino != self.nickname and origem != self.nickname and status == "naoexiste":
+        if destino == "TODOS" and origem != self.nickname and status == "naoexiste":
             print(f"[BROADCAST-VISUALIZADO] {self.nickname} viu broadcast de {origem} para TODOS: {texto}")
 
         # 1) Pacote não é para mim?
@@ -268,7 +268,7 @@ class RingNode:
         """Inicia as threads e o funcionamento do nó."""
         print("=== INICIANDO NÓ ===")
         print(f"{self.nickname} | porta {self.listen_port} | próximo {self.next_ip}:{self.next_port}")
-        print(f"Peers: {self.peers}")
+        # self.discover_peers()  # Comentado pois não estamos mais utilizando a lista de peers
         print("====================")
 
         self.receiver_thread.start()

@@ -34,16 +34,16 @@ devem seguir a ordem do anel.
 Os dados enviados deverão retornar à máquina origem e somente depois disso o token poderá ser
 enviado para a próxima máquina.
 Quando a máquina origem enviar um pacote de dados, um campo no cabeçalho do pacote deverá
-ser marcado como “naoexiste”. Esse pacote poderá retornar para a máquina origem com uma
+ser marcado como "naoexiste". Esse pacote poderá retornar para a máquina origem com uma
 das seguintes configurações:
- “naoexiste”: significa que a máquina destino não se encontra na rede ou está desligada.
+ "naoexiste": significa que a máquina destino não se encontra na rede ou está desligada.
 Neste caso, uma mensagem na tela deve informar o ocorrido, a mensagem deve ser
 retirada da fila e o token deve ser transmitido para a próxima máquina do anel;
- “NACK”: significa que a máquina destino identificou um erro no pacote e o mesmo deverá
+ "NACK": significa que a máquina destino identificou um erro no pacote e o mesmo deverá
 ser retransmitido pela origem. Neste caso, uma mensagem na tela deve informar o
 ocorrido, o token deve ser transmitido para a próxima máquina do anel, e a mensagem não
 deve ser retirada da fila, sendo retransmitida na próxima passagem do token;
- “ACK”: significa que o pacote foi recebido corretamente pela máquina destino. Neste caso,
+ "ACK": significa que o pacote foi recebido corretamente pela máquina destino. Neste caso,
 uma mensagem na tela deve informar o ocorrido, a mensagem deve ser retirada da fila e
 o token deve ser transmitido para a próxima máquina do anel.
 Antes de enviar uma mensagem, o cálculo de controle de erro deverá ser inserido na mensagem
@@ -52,8 +52,8 @@ deve implementar um módulo de inserção de falhas que force as máquinas a ins
 aleatoriamente nas mensagens. Este módulo deve trabalhar com alguma probabilidade para inserir
 erro nas mensagens.
 Ao receber uma mensagem, a máquina destino deve recalcular o controle de erro. Caso a
-mensagem tenha sido recebida com erro, ela deve ser marcada com “NACK”, caso contrário ela
-deve ser marcada com “ACK”.
+mensagem tenha sido recebida com erro, ela deve ser marcada com "NACK", caso contrário ela
+deve ser marcada com "ACK".
 Além disso, deverá ser implementada uma fila de mensagens em cada máquina. Esta fila poderá
 estar vazia ou não. A fila poderá conter até 10 mensagens. Para cada mensagem adicionada, deve
 ser armazenado também o apelido da máquina destino.
@@ -61,7 +61,7 @@ Os serviços de envio de dados oferecidos pela aplicação devem contemplar duas
 transmissão:
  Unicast: envia o pacote para um único destino;
  Broadcast: envia o pacote para todas as máquinas da rede usando o apelido TODOS. Neste
-caso, o módulo de inserção de falhas deve manter o pacote em “naoexiste”.
+caso, o módulo de inserção de falhas deve manter o pacote em "naoexiste".
 Descrição dos Pacotes
 A implementação da aplicação deve seguir fielmente o formato dos pacotes descritos a seguir, pois
 durante a apresentação do trabalho, aplicações de grupos diferentes deverão se comunicarem.
@@ -72,7 +72,7 @@ mostra o exemplo a seguir:
 9000
 Pacote de dados
 Um pacote de dados é formado por outra sequência numérica em formato string e terá o valor
-7777. Neste caso, o valor 7777 será seguido de um ‘:’ e pelos campos:
+7777. Neste caso, o valor 7777 será seguido de um ':' e pelos campos:
 <controle de erro>;<apelido de origem>;<apelido do destino>;<CRC>;<mensagem>.
 Exemplo:
 7777:naoexiste;Bob;Mary;19385749;Oi pessoal!
