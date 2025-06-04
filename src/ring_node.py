@@ -1,3 +1,7 @@
+# ===============================
+# Trabalho Final - Redes de Computadores
+# Simulação de Rede em Anel com Token e CRC
+# ===============================
 import socket
 import threading
 import time
@@ -5,11 +9,6 @@ import queue
 import zlib
 import random
 import os
-
-# ===============================
-# Trabalho Final - Redes de Computadores
-# Simulação de Rede em Anel com Token e CRC
-# ===============================
 
 TOKEN_MSG = "9000"  # Valor do token
 DATA_MSG_PREFIX = "7777:"  # Prefixo dos pacotes de dados
@@ -34,23 +33,21 @@ class RingNode:
 
         # Cria e configura o socket UDP
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)  # Permite broadcast
         self.sock.bind(("", self.listen_port))
 
-        # Cria a thread responsável por receber mensagens da rede (escuta o socket UDP)
+        # Threads principais do nó
         self.receiver_thread      = threading.Thread(target=self.receiver_loop,      daemon=True)
-        # Cria a thread responsável por ler comandos do usuário (input do terminal)
         self.user_thread          = threading.Thread(target=self.user_loop,          daemon=True)
-        # Cria a thread responsável por monitorar o token e gerar um novo se necessário
         self.token_monitor_thread = threading.Thread(target=self.token_monitor_loop, daemon=True)
 
         # Controle do token
         self.ultimo_token  = time.time()  # Última vez que o token passou
-        self.token_timeout = 30          # Tempo limite para considerar token perdido
+        self.token_timeout = 30           # Tempo limite para considerar token perdido
         self.token_gerado  = False        # Flag para evitar múltiplos tokens
 
         # Lista de peers (apelidos dos outros nós, para broadcast)
-        # self.discover_peers()  # Comentado pois não estamos mais utilizando a lista de peers
+        # self.peers = []
+        # self.discover_peers()
 
     def read_config(self, config_file):
         """Lê o arquivo de configuração do nó.
@@ -162,7 +159,7 @@ class RingNode:
             time.sleep(self.data_time)
 
             if dest == "TODOS":
-                # Envia a mensagem para o próximo nó do anel, não via broadcast UDP
+                # Envia a mensagem para o próximo nó do anel, não via broadcast UDP nem for
                 crc = zlib.crc32(msg.encode())
                 msg_falha = self.inserir_falha(msg)
                 pkt = f"{DATA_MSG_PREFIX}naoexiste;{self.nickname};TODOS;{crc};{msg_falha}"
@@ -194,15 +191,15 @@ class RingNode:
         crc_calc = str(zlib.crc32(texto.encode()))
 
         # Log para visualizar mensagens broadcast (TODOS) em nós intermediários
-        if destino == "TODOS" and origem != self.nickname and status == "naoexiste":
-            print(f"[BROADCAST-VISUALIZADO] {self.nickname} viu broadcast de {origem} para TODOS: {texto}")
+        if destino == "TODOS" and status == "naoexiste":
+            if origem != self.nickname:
+                print(f"[BROADCAST-VISUALIZADO] {self.nickname} viu broadcast de {origem} para TODOS: {texto}")
+                self.sock.sendto(msg.encode(), (self.next_ip, self.next_port))
+            # Se a mensagem voltou ao originador, não repassa mais
+            return
 
         # 1) Pacote não é para mim?
         if destino != self.nickname:
-            # Se for broadcast (destino == "TODOS"), processa mas NÃO repassa!
-            if destino == "TODOS":
-                # Já processou, não repassa para evitar loop
-                return
             # Detectar timeout de destinatário que não existe
             if origem == self.nickname and status == "naoexiste":
                 print(f"[FALHA] destinatário '{destino}' não existe ou está offline. Pacote: {msg}")
@@ -224,13 +221,9 @@ class RingNode:
             if crc != crc_calc:
                 print(f"[ERRO] CRC inválido! Esperado {crc_calc}, recebido {crc}. Pacote: {msg}")
                 status2 = "NACK"
-            elif crc == crc_calc:
+            else:
                 print(f"[RECEBIDA] {msg}")
                 status2 = "ACK"
-            elif destino == "TODOS":
-                print(f"[RECEBIDA] {msg}")
-                status2 = "naoexiste"
-
             # Envia retorno (origem/destino trocados)
             retorno = f"{DATA_MSG_PREFIX}{status2};{self.nickname};{origem};{crc_calc};{texto}"
             self.sock.sendto(retorno.encode(), (self.next_ip, self.next_port))
@@ -272,7 +265,7 @@ class RingNode:
         """Inicia as threads e o funcionamento do nó."""
         print("=== INICIANDO NÓ ===")
         print(f"{self.nickname} | porta {self.listen_port} | próximo {self.next_ip}:{self.next_port}")
-        # self.discover_peers()  # Comentado pois não estamos mais utilizando a lista de peers
+        # print(f"Peers: {self.peers}")
         print("====================")
 
         self.receiver_thread.start()
@@ -301,3 +294,4 @@ if __name__ == "__main__":
         sys.exit(1)
     node = RingNode(sys.argv[1], int(sys.argv[2]))
     node.start()
+    

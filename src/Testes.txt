@@ -1,0 +1,43 @@
+# Testes para verificação do programa de Rede em Anel
+
+1. Teste de Token Circulando
+- Inicie todos os nós.
+- Verifique se cada nó imprime mensagens indicando que recebeu e repassou o token.
+
+2. Envio de Mensagem Unicast
+- Em qualquer nó, envie: <apelido_destino> <mensagem>
+  Exemplo: Giovana Olá, Giovana!
+- O destinatário deve exibir [RECEBIDA] e o originador deve exibir [CONFIRMADA].
+
+3. Envio de Mensagem para TODOS (Broadcast)
+- Em qualquer nó, envie: TODOS <mensagem>
+  Exemplo: TODOS Olá, rede!
+- Todos os nós devem exibir [BROADCAST-VISUALIZADO] ao receber a mensagem.
+
+4. Fila Cheia
+- Envie rapidamente mais de 10 mensagens em um nó.
+- Deve aparecer [FILA] cheia, descartei mensagem. ao tentar adicionar a 11ª mensagem.
+
+5. Simulação de Falha (NACK)
+- Altere a função inserir_falha para prob=1.0.
+- Envie uma mensagem unicast.
+- O destinatário deve responder com NACK e o originador deve tentar retransmitir.
+- Após segunda falha, a mensagem é descartada.
+
+6. Destinatário Inexistente
+- Envie uma mensagem para um apelido que não existe.
+  Exemplo: Fulano Oi!
+- O originador deve exibir [FALHA] destinatário 'Fulano' não existe ou está offline.
+
+7. Token Perdido
+- Mate (feche) um dos nós para simular quebra do anel.
+- O nó criador do token deve exibir [ALERTA] Token perdido! Gerando novo token...
+
+8. Token Duplicado
+- Configure dois nós como criadores do token (true no config).
+- Deve aparecer [ALERTA] Token duplicado detectado! Ignorando token recebido cedo demais.
+
+# Dicas
+- Observe os logs em todos os terminais.
+- Teste cada cenário separadamente.
+- Se algum teste não funcionar como esperado, revise os arquivos de configuração e o fluxo do token.
