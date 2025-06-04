@@ -194,7 +194,7 @@ class RingNode:
         crc_calc = str(zlib.crc32(texto.encode()))
 
         # Log para visualizar mensagens broadcast (TODOS) em nós intermediários
-        if destino != self.nickname and origem != self.nickname and status == "naoexiste":
+        if destino == "TODOS" and origem != self.nickname and status == "naoexiste":
             print(f"[BROADCAST-VISUALIZADO] {self.nickname} viu broadcast de {origem} para TODOS: {texto}")
 
         # 1) Pacote não é para mim?
@@ -224,9 +224,13 @@ class RingNode:
             if crc != crc_calc:
                 print(f"[ERRO] CRC inválido! Esperado {crc_calc}, recebido {crc}. Pacote: {msg}")
                 status2 = "NACK"
-            else:
+            elif crc == crc_calc:
                 print(f"[RECEBIDA] {msg}")
                 status2 = "ACK"
+            elif destino == "TODOS":
+                print(f"[RECEBIDA] {msg}")
+                status2 = "naoexiste"
+
             # Envia retorno (origem/destino trocados)
             retorno = f"{DATA_MSG_PREFIX}{status2};{self.nickname};{origem};{crc_calc};{texto}"
             self.sock.sendto(retorno.encode(), (self.next_ip, self.next_port))
