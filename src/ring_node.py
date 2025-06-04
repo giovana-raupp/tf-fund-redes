@@ -198,7 +198,11 @@ class RingNode:
             print(f"[BROADCAST-VISUALIZADO] {self.nickname} viu broadcast de {origem} para TODOS: {texto}")
 
         # 1) Pacote não é para mim?
-        if destino != self.nickname and destino != "TODOS":
+        if destino != self.nickname:
+            # Se for broadcast (destino == "TODOS"), processa mas NÃO repassa!
+            if destino == "TODOS":
+                # Já processou, não repassa para evitar loop
+                return
             # Detectar timeout de destinatário que não existe
             if origem == self.nickname and status == "naoexiste":
                 print(f"[FALHA] destinatário '{destino}' não existe ou está offline. Pacote: {msg}")
