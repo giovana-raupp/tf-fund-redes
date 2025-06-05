@@ -86,7 +86,7 @@ class RingNode:
                     # Verifica token duplicado (chegou cedo demais)
                     tempo_desde_ultimo = time.time() - self.ultimo_token
                     print(f"[DEBUG] Tempo desde o último token: {tempo_desde_ultimo:.4f}s")
-                    if tempo_desde_ultimo < 1:
+                    if tempo_desde_ultimo < self.token_time * 0.5:
                         print(f"[ALERTA] Token duplicado detectado! Ignorando token recebido cedo demais.")
                         continue  # descarta o token extra
                     self.ultimo_token = time.time()
@@ -144,7 +144,7 @@ class RingNode:
             if not self.msg_queue.empty():
                 self.msg_queue.get()  # Remove da fila
             # Libera o token normalmente
-            # time.sleep(5)
+            time.sleep(5)
             self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
             print(f"[TOKEN] repassado por {self.nickname}")
             return
@@ -179,7 +179,7 @@ class RingNode:
             return
 
         # Sem nada p/ fazer: repassa token
-        # time.sleep(5)
+        time.sleep(5)
         self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
         print(f"[TOKEN] repassado por {self.nickname}")
 
@@ -298,4 +298,3 @@ if __name__ == "__main__":
         sys.exit(1)
     node = RingNode(sys.argv[1], int(sys.argv[2]))
     node.start()
-    
