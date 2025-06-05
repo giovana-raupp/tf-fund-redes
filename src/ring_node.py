@@ -149,15 +149,6 @@ class RingNode:
     def handle_token(self):
         self.tem_token = True
         
-        # Verifica token duplicado (chegou cedo demais)
-        tempo_anel = self.num_maquinas * self.token_time
-        
-        if self.is_token_creator:
-            if tempo_anel < TEMPO_TOKEN_DUPLICADO:
-                print(f"[ALERTA] Token duplicado detectado! Ignorando token recebido cedo demais.")
-                self.tem_token = False
-                return
-        
         self.ultimo_token = time.monotonic()
         self.token_gerado = False
         print(f"[TOKEN] recebido em {self.nickname}")
