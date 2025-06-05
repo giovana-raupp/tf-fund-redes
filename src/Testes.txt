@@ -16,6 +16,18 @@
 
 4. Fila Cheia
 - Envie rapidamente mais de 10 mensagens em um nó.
+-EXEMPLO:
+    Samara Teste 1
+    Samara Teste 2
+    Samara Teste 3
+    Samara Teste 4
+    Samara Teste 5
+    Samara Teste 6
+    Samara Teste 7
+    Samara Teste 8
+    Samara Teste 9
+    Samara Teste 10
+    Samara Teste 11
 - Deve aparecer [FILA] cheia, descartei mensagem. ao tentar adicionar a 11ª mensagem.
 
 5. Simulação de Falha (NACK)
@@ -41,3 +53,177 @@
 - Observe os logs em todos os terminais.
 - Teste cada cenário separadamente.
 - Se algum teste não funcionar como esperado, revise os arquivos de configuração e o fluxo do token.
+
+# Relatório - Simulação de Rede em Anel com Token e CRC
+
+## 1. Introdução
+
+Este trabalho tem como objetivo implementar uma aplicação que simula o funcionamento de uma rede local em anel, utilizando o protocolo UDP para transporte de mensagens. O sistema implementa o controle de token, envio de mensagens unicast e broadcast, confirmação de entrega (ACK/NACK), detecção de destinatário inexistente, controle de erro com CRC32 e tratamento de situações de token perdido ou duplicado.
+
+---
+
+## 2. Estrutura da Solução
+
+### 2.1. Organização do Código
+O código foi estruturado em uma classe principal chamada `RingNode`, responsável por todo o funcionamento de cada nó do anel. Cada nó é executado em um terminal diferente, com seu próprio arquivo de configuração, e se comunica com os demais nós via UDP.
+
+### 2.2. Threads
+Cada nó utiliza três threads principais:
+- **receiver_thread:** Responsável por receber pacotes UDP (token ou dados).
+- **user_thread:** Lê comandos do usuário (mensagens a serem enviadas).
+- **token_monitor_thread:** Monitora o token, detectando perda ou duplicidade.
+
+### 2.3. Fila de Mensagens
+Cada nó possui uma fila de até 10 mensagens. Apenas uma mensagem é enviada por vez, quando o nó recebe o token.
+
+### 2.4. Controle do Token
+O token circula pelo anel, controlando qual nó pode enviar mensagens. Apenas um nó é responsável por gerar o token inicial, conforme definido no arquivo de configuração.
+
+### 2.5. Formato dos Pacotes
+- **Token:**  `9000`
+- **Dados:**  `7777:status;origem;destino;crc;mensagem`
+
+### 2.6. Controle de Erro
+O CRC32 é calculado e enviado junto com cada mensagem. O destinatário recalcula o CRC e responde com ACK (se correto) ou NACK (se houver erro). O sistema também permite simular falhas, inserindo erros aleatórios nas mensagens.
+
+### 2.7. Broadcast
+Mensagens para "TODOS" circulam pelo anel, passando de nó em nó, e todos os nós exibem a mensagem ao recebê-la.
+
+### 2.8. Tratamento de Destinatário Inexistente
+Se uma mensagem dá a volta no anel sem encontrar o destinatário, o originador é avisado e a mensagem é removida da fila.
+
+### 2.9. Token Perdido ou Duplicado
+O nó criador do token monitora o tempo de passagem do token e gera um novo se necessário. O sistema também detecta e descarta tokens duplicados.
+
+---
+
+## 3. Exemplos de Execução
+
+### 3.1. Envio de Mensagem Unicast
+No terminal de Mykelly:
+```
+Giovana Olá, Giovana!
+```
+- Giovana exibe: `[RECEBIDA] ...`
+- Mykelly exibe: `[CONFIRMADA] ...`
+
+### 3.2. Envio de Mensagem para TODOS
+No terminal de Samara:
+```
+TODOS Olá, rede!
+```
+- Todos os nós exibem: `[BROADCAST-VISUALIZADO] ...`
+
+### 3.3. Fila Cheia
+No terminal de um nó, envie rapidamente 11 mensagens:
+```
+Samara Teste 1
+Samara Teste 2
+...
+Samara Teste 11
+```
+- Ao tentar adicionar a 11ª mensagem: `[FILA] cheia, descartei mensagem.`
+
+### 3.4. Destinatário Inexistente
+No terminal de qualquer nó:
+```
+Fulano Oi!
+```
+- O originador exibe: `[FALHA] destinatário 'Fulano' não existe ou está offline.`
+
+---
+
+## 4. Dificuldades Encontradas e Exemplos Práticos
+
+Durante o desenvolvimento do trabalho, alguns requisitos se mostraram especialmente desafiadores:
+
+### 4.1. Broadcast no Anel (mensagem para TODOS)
+No início, houve confusão sobre como implementar o envio de mensagens para "TODOS". A abordagem inicial foi tentar enviar a mensagem para todos de uma vez, usando uma lista de peers ou UDP broadcast. No entanto, a definição do trabalho exigia que a mensagem circulasse pelo anel, passando de nó em nó. Ao testar, percebi que apenas alguns nós recebiam a mensagem, ou que ela era exibida mais de uma vez, ou até mesmo não circulava corretamente. Foi necessário reescrever o código para garantir que a mensagem fosse enviada apenas para o próximo nó do anel e que cada nó, ao receber, exibisse o log e repassasse a mensagem, até que ela desse a volta completa.
+
+### 4.2. Controle do Token (perdido/duplicado)
+Implementar a lógica para detectar token perdido e evitar tokens duplicados foi um desafio. Era preciso monitorar o tempo de passagem do token e garantir que apenas o nó criador pudesse gerar um novo token em caso de perda. Durante os testes, ao fechar um dos nós para simular uma falha, o token parava de circular e o nó criador precisava detectar a ausência do token e gerar um novo. Em alguns momentos, dois nós acabaram gerando tokens ao mesmo tempo, causando duplicidade e confusão no anel. Ajustar o tempo de detecção e garantir que apenas um token circulasse exigiu vários testes e ajustes finos.
+
+### 4.3. Configuração dos Nós (IP/porta)
+Configurar corretamente os arquivos de cada nó foi fundamental. Pequenos erros, como inverter o IP ou a porta do próximo nó, faziam com que o token ou as mensagens se perdessem, e o anel deixava de funcionar. Em um dos testes, um nó estava configurado para enviar mensagens para a própria porta, criando um loop infinito e travando o sistema. Em outro caso, um nó estava com o IP errado e as mensagens nunca chegavam ao destino, dificultando a depuração.
+
+### 4.4. Confirmação de Entrega e Destinatário Inexistente
+Implementar corretamente o fluxo de ACK/NACK e o tratamento de mensagens para destinatários inexistentes foi trabalhoso. Era preciso garantir que a mensagem desse a volta completa no anel e que o originador fosse avisado caso o destinatário não existisse. Ao enviar uma mensagem para um apelido inexistente, percebi que, se algum nó não estivesse rodando ou se o código de repasse não estivesse correto, o originador nunca recebia o aviso de falha. Foi necessário revisar o fluxo de repasse e garantir que todos os retornos circulassem até o originador.
+
+### 4.5. Simulação de Falhas e Retransmissão
+Implementar o mecanismo de inserção de falhas e garantir que a retransmissão ocorresse apenas uma vez, conforme o enunciado, exigiu atenção especial. Ao forçar erros nas mensagens (alterando a probabilidade de falha para 1.0), precisei garantir que o sistema respondesse com NACK, que o originador tentasse retransmitir apenas uma vez, e que, após a segunda falha, a mensagem fosse descartada corretamente. Pequenos erros nessa lógica faziam com que a mensagem ficasse presa na fila ou fosse retransmitida indefinidamente.
+
+### 4.6. Testes Locais e Depuração
+Testar o sistema localmente, simulando vários nós em diferentes terminais, foi trabalhoso. Era necessário garantir que todos os nós estivessem rodando, configurados corretamente, e observar os logs para identificar possíveis problemas. Em alguns testes, esqueci de iniciar um dos nós, o que fazia com que o token ou as mensagens ficassem "presas" e o sistema parasse de funcionar. Em outros casos, a ordem de inicialização dos nós influenciava no funcionamento do token, exigindo atenção extra durante os testes.
+
+---
+
+## 5. Considerações Finais
+
+O trabalho permitiu aplicar conceitos de redes de computadores, comunicação UDP, controle de token, tratamento de erros e programação concorrente em Python. O sistema está de acordo com a definição do trabalho, robusto e pronto para ser apresentado e testado em diferentes cenários.
+
+## 6. Testes Locais - Simulação de Três Máquinas
+
+Para validar o funcionamento do sistema, os testes foram realizados localmente, simulando três máquinas diferentes em um único computador. Isso foi feito utilizando três arquivos de configuração distintos, cada um representando um nó do anel, e executando três instâncias do programa em terminais separados.
+
+### Estrutura dos Arquivos de Configuração
+Cada arquivo de configuração seguia o modelo definido no trabalho, contendo:
+1. O IP e a porta do próximo nó do anel (para onde o token e as mensagens devem ser enviados)
+2. O apelido do nó atual
+3. O tempo do token (em segundos)
+4. Se o nó é o criador do token inicial (`true` ou `false`)
+
+**Exemplo de configuração para três nós:**
+
+#### config_Giovana.txt
+```
+127.0.0.1:6001
+Giovana
+1
+false
+```
+
+#### config_Mykelly.txt
+```
+127.0.0.1:6002
+Mykelly
+1
+false
+```
+
+#### config_Samara.txt
+```
+127.0.0.1:6000
+Samara
+1
+true
+```
+
+### Execução dos Nós
+Cada nó foi iniciado em um terminal diferente, usando o comando:
+
+```
+python ring_node.py config_Giovana.txt 6000
+python ring_node.py config_Mykelly.txt 6001
+python ring_node.py config_Samara.txt 6002
+```
+
+- O número da porta no comando corresponde à porta em que o nó irá escutar.
+- O IP utilizado foi sempre `127.0.0.1` (localhost), pois todos os nós estavam rodando na mesma máquina.
+
+### Simulação do Anel
+Com essa configuração, foi possível simular o funcionamento de uma rede em anel real, onde:
+- Cada nó conhece apenas o próximo nó do anel (através do arquivo de configuração).
+- O token e as mensagens circulam de nó em nó, seguindo a ordem definida nos arquivos.
+- Cada nó pode enviar mensagens, receber, repassar, e processar confirmações (ACK/NACK).
+
+### Testes Realizados
+Durante os testes, foram verificados:
+- Circulação correta do token entre os três nós.
+- Envio e recebimento de mensagens unicast e broadcast.
+- Tratamento de fila cheia, destinatário inexistente, simulação de falhas (NACK), token perdido e duplicado.
+- Logs exibidos em todos os terminais, facilitando a depuração e a validação do funcionamento.
+
+### Vantagens da Simulação Local
+- **Facilidade de depuração:** Todos os logs podiam ser observados simultaneamente.
+- **Reprodutibilidade:** Era possível reiniciar rapidamente qualquer nó e repetir os testes.
+- **Fidelidade ao modelo do trabalho:** Mesmo rodando localmente, a lógica do anel foi mantida, com cada nó agindo como se estivesse em uma máquina diferente.

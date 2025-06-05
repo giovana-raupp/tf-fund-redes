@@ -63,7 +63,7 @@ class RingNode:
         self.next_ip          = ip
         self.next_port        = int(port)
         self.nickname         = lines[1]
-        self.token_time       = int(lines[2])
+        self.token_time       = float(lines[2])
         self.is_token_creator = lines[3].lower() == 'true'
 
     # def discover_peers(self):
@@ -85,7 +85,8 @@ class RingNode:
                 if msg == TOKEN_MSG:
                     # Verifica token duplicado (chegou cedo demais)
                     tempo_desde_ultimo = time.time() - self.ultimo_token
-                    if tempo_desde_ultimo < self.token_time * 0.8:  # Fator de segurança
+                    print(f"[DEBUG] Tempo desde o último token: {tempo_desde_ultimo:.4f}s")
+                    if tempo_desde_ultimo < 1:
                         print(f"[ALERTA] Token duplicado detectado! Ignorando token recebido cedo demais.")
                         continue  # descarta o token extra
                     self.ultimo_token = time.time()
@@ -120,9 +121,8 @@ class RingNode:
         return mensagem
 
     def handle_token(self):
-        """Processa o token recebido: envia mensagem, retransmite ou repassa token."""
-        print(f"[TOKEN] aguardando {self.token_time}s...")
-        time.sleep(self.token_time)
+        # print(f"[TOKEN] aguardando {self.token_time}s...")
+        # time.sleep(self.token_time)
 
         # Retransmissão de NACK pendente (apenas uma vez)
         if self.retransmit and not self.retransmit_done:
@@ -144,7 +144,7 @@ class RingNode:
             if not self.msg_queue.empty():
                 self.msg_queue.get()  # Remove da fila
             # Libera o token normalmente
-            time.sleep(5)
+            # time.sleep(5)
             self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
             print(f"[TOKEN] repassado por {self.nickname}")
             return
@@ -179,7 +179,7 @@ class RingNode:
             return
 
         # Sem nada p/ fazer: repassa token
-        time.sleep(5)
+        # time.sleep(5)
         self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
         print(f"[TOKEN] repassado por {self.nickname}")
 
@@ -275,8 +275,12 @@ class RingNode:
         if self.is_token_creator:
             print(f"[TOKEN] aguardando 10s antes do inicial...")
             time.sleep(10)
-            self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
-            print("[TOKEN] inicial enviado!")
+            # Só envia o token se não recebeu nenhum nesse tempo
+            if time.time() - self.ultimo_token > self.token_time:
+                self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
+                print("[TOKEN] inicial enviado!")
+            else:
+                print("[TOKEN] Já existe um token circulando, não vou criar outro!")
 
         try:
             while self.running:
