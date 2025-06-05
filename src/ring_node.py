@@ -46,7 +46,8 @@ class RingNode:
 
         # Controle do token
         self.ultimo_token  = time.monotonic()  # Última vez que o token passou
-        self.token_timeout = self.token_time * self.num_maquinas   # Tempo limite para considerar token perdido
+        # Tempo limite para considerar o token perdido
+        self.token_timeout = (self.token_time * self.num_maquinas) + TIME_TOKEN_ERROR
         self.token_gerado  = False        # Flag para evitar múltiplos tokens
 
         # Lista de peers (apelidos dos outros nós, para broadcast)
@@ -279,7 +280,13 @@ class RingNode:
             if not self.is_token_creator:
                 time.sleep(1)
                 continue
-            # O controle de timeout agora está no receiver_loop
+            # Verifica periodicamente se o token está ausente por tempo demais
+            elapsed = time.monotonic() - self.ultimo_token
+            if elapsed > self.token_timeout and not self.token_gerado:
+                print("[ALERTA] Token perdido! Gerando novo token...")
+                self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
+                self.ultimo_token = time.monotonic()
+                self.token_gerado = True
             time.sleep(1)
 
     def start(self):

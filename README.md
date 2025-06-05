@@ -77,7 +77,7 @@ Isso é útil para finalizar rapidamente todos os terminais abertos durante os t
 - **Controle de erro:** CRC32 e módulo de inserção de falhas.
 - **Retransmissão:** Mensagem retransmitida apenas uma vez após NACK.
 - **Detecção de destinatário inexistente:** Mensagem removida da fila e aviso ao usuário.
-- **Token perdido/duplicado:** Só o nó criador gera novo token; tokens duplicados são descartados.
+- **Token perdido/duplicado:** O nó criador monitora a ausência do token e gera um novo quando necessário; tokens duplicados são descartados.
 - **Visualização:** Prints mostram o caminho dos pacotes, retransmissões, fila cheia, etc.
 
 ---
