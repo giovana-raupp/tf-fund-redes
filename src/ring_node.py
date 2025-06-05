@@ -84,12 +84,12 @@ class RingNode:
                 msg = data.decode(errors='ignore')
                 if msg == TOKEN_MSG:
                     # Verifica token duplicado (chegou cedo demais)
-                    tempo_desde_ultimo = time.time() - self.ultimo_token
+                    tempo_desde_ultimo = time.monotonic() - self.ultimo_token
                     print(f"[DEBUG] Tempo desde o último token: {tempo_desde_ultimo:.4f}s")
                     if tempo_desde_ultimo < self.token_time * 0.5:
                         print(f"[ALERTA] Token duplicado detectado! Ignorando token recebido cedo demais.")
                         continue  # descarta o token extra
-                    self.ultimo_token = time.time()
+                    self.ultimo_token = time.monotonic()
                     self.token_gerado  = False
                     print(f"[TOKEN] recebido em {self.nickname}")
                     self.handle_token()
