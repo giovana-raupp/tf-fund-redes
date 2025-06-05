@@ -16,6 +16,8 @@ DATA_MSG_PREFIX = "7777:"  # Prefixo dos pacotes de dados
 # Tempo (em segundos) que cada nó "segura" um pacote
 DEFAULT_DATA_TIME = 2
 # ---------------------------------------------------
+# Constantes para controle de token
+TIME_TOKEN_ERROR = 6       # segundos de tolerância para erro de tempo
 
 class RingNode:
     def __init__(self, config_file, listen_port):
@@ -30,6 +32,8 @@ class RingNode:
         self.retransmit     = None  # Armazena mensagem a ser retransmitida após NACK
         self.retransmit_done = False  # Flag para garantir retransmissão única após NACK
         self.current_msg    = None  # Mensagem atualmente em processamento
+        self.tem_token      = False  # Flag para indicar se o nó está com o token
+        self.token_retido   = False  # Flag para indicar se o token está retido
 
         # Cria e configura o socket UDP
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -41,8 +45,8 @@ class RingNode:
         self.token_monitor_thread = threading.Thread(target=self.token_monitor_loop, daemon=True)
 
         # Controle do token
-        self.ultimo_token  = time.time()  # Última vez que o token passou
-        self.token_timeout = 30           # Tempo limite para considerar token perdido
+        self.ultimo_token  = time.monotonic()  # Última vez que o token passou
+        self.token_timeout = self.token_time * self.num_maquinas   # Tempo limite para considerar token perdido
         self.token_gerado  = False        # Flag para evitar múltiplos tokens
 
         # Lista de peers (apelidos dos outros nós, para broadcast)
@@ -56,6 +60,7 @@ class RingNode:
         2. apelido do nó
         3. tempo do token (s)
         4. se gera o token inicial (true|false)
+        5. número de máquinas no anel
         """
         with open(config_file, 'r') as f:
             lines = [l.strip() for l in f if l.strip()]
@@ -65,16 +70,7 @@ class RingNode:
         self.nickname         = lines[1]
         self.token_time       = float(lines[2])
         self.is_token_creator = lines[3].lower() == 'true'
-
-    # def discover_peers(self):
-    #     """Descobre os peers lendo todos os arquivos de configuração na pasta."""
-    #     cfg_dir = os.path.dirname(__file__)
-    #     for fn in os.listdir(cfg_dir):
-    #         if fn.startswith("config_") and fn.endswith(".txt"):
-    #             with open(os.path.join(cfg_dir, fn)) as f:
-    #                 lns = [l.strip() for l in f if l.strip()]
-    #             if len(lns) >= 2 and lns[1] != self.nickname:
-    #                 self.peers.append(lns[1])
+        self.num_maquinas     = int(lines[4])
 
     def receiver_loop(self):
         """Thread principal de recepção de pacotes UDP."""
@@ -83,16 +79,33 @@ class RingNode:
                 data, _ = self.sock.recvfrom(4096)
                 msg = data.decode(errors='ignore')
                 if msg == TOKEN_MSG:
-                    # Verifica token duplicado (chegou cedo demais)
-                    tempo_desde_ultimo = time.monotonic() - self.ultimo_token
-                    print(f"[DEBUG] Tempo desde o último token: {tempo_desde_ultimo:.4f}s")
-                    if tempo_desde_ultimo < self.token_time * 0.5:
-                        print(f"[ALERTA] Token duplicado detectado! Ignorando token recebido cedo demais.")
-                        continue  # descarta o token extra
-                    self.ultimo_token = time.monotonic()
-                    self.token_gerado  = False
-                    print(f"[TOKEN] recebido em {self.nickname}")
-                    self.handle_token()
+                    # Apenas a máquina geradora verifica token duplicado e timeout
+                    if self.is_token_creator:
+                        tempo_anel = self.num_maquinas * self.token_time
+                        TEMPO_TOKEN_DUPLICADO = tempo_anel - TIME_TOKEN_ERROR
+                        TEMPO_TOKEN_TIMEOUT = tempo_anel + TIME_TOKEN_ERROR
+                        tempo_real = time.monotonic() - self.ultimo_token
+                        print(f"[DEBUG] Tempo real desde o último token: {tempo_real:.4f}s | Tempo do anel: {tempo_anel:.4f}s | Duplicado < {TEMPO_TOKEN_DUPLICADO:.4f}s | Timeout > {TEMPO_TOKEN_TIMEOUT:.4f}s")
+                        if tempo_real <= TEMPO_TOKEN_DUPLICADO:
+                            print(f"[ALERTA] Token duplicado detectado! Ignorando token recebido cedo demais.")
+                            continue  # descarta o token extra
+                        elif tempo_real >= TEMPO_TOKEN_TIMEOUT:
+                            print(f"[ALERTA] Token perdido! Gerando novo token...")
+                            self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
+                            self.ultimo_token = time.monotonic()
+                            self.token_gerado = True
+                            continue
+                        else:
+                            # Não é duplicado nem timeout, processa normalmente
+                            self.ultimo_token = time.monotonic()
+                            self.token_gerado  = False
+                            print(f"[TOKEN] recebido em {self.nickname}")
+                            self.handle_token()
+                    else:
+                        # Não-geradoras apenas processam o token normalmente
+                        self.ultimo_token = time.monotonic()
+                        print(f"[TOKEN] recebido em {self.nickname}")
+                        self.handle_token()
                 elif msg.startswith(DATA_MSG_PREFIX):
                     self.handle_data(msg)
             except:
@@ -104,6 +117,19 @@ class RingNode:
             try:
                 linha = input().strip()
                 if not linha: continue
+                
+                # Comandos especiais
+                if linha == "0" and not self.is_token_creator and self.tem_token:
+                    print("[COMANDO] Retendo token...")
+                    self.token_retido = True
+                    continue
+                elif linha == "1" and not self.is_token_creator:
+                    print("[COMANDO] Gerando novo token...")
+                    self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
+                    self.ultimo_token = time.time()
+                    continue
+                
+                # Comando normal de mensagem
                 dest, texto = linha.split(" ", 1)
                 if self.msg_queue.full():
                     print("[FILA] cheia, descartei mensagem.")
@@ -121,9 +147,29 @@ class RingNode:
         return mensagem
 
     def handle_token(self):
-        # print(f"[TOKEN] aguardando {self.token_time}s...")
-        # time.sleep(self.token_time)
+        self.tem_token = True
+        
+        # Verifica token duplicado (chegou cedo demais)
+        tempo_anel = self.num_maquinas * self.token_time
+        
+        if self.is_token_creator:
+            if tempo_anel < TEMPO_TOKEN_DUPLICADO:
+                print(f"[ALERTA] Token duplicado detectado! Ignorando token recebido cedo demais.")
+                self.tem_token = False
+                return
+        
+        self.ultimo_token = time.monotonic()
+        self.token_gerado = False
+        print(f"[TOKEN] recebido em {self.nickname}")
+        
+        # Se o token estiver retido, não processa
+        if self.token_retido:
+            print("[TOKEN] retido por comando...")
+            return
+            
+        self.handle_token_processing()
 
+    def handle_token_processing(self):
         # Retransmissão de NACK pendente (apenas uma vez)
         if self.retransmit and not self.retransmit_done:
             dest, msg = self.retransmit
@@ -132,21 +178,9 @@ class RingNode:
             self.sock.sendto(pkt.encode(), (self.next_ip, self.next_port))
             print(f"[RETRANSMISSÃO] enviado: {pkt}")
             self.awaiting_ack = True
-            self.retransmit_done = True  # Marca que já retransmitiu uma vez
-            self.current_msg = (dest, msg)  # Mantém a mensagem até confirmação
-            return
-        elif self.retransmit and self.retransmit_done:
-            print(f"[DESCARTADA] Mensagem '{msg}' para {dest} após segunda falha (NACK duplo).")
-            self.retransmit = None
-            self.retransmit_done = False
-            self.awaiting_ack = False
-            self.current_msg = None
-            if not self.msg_queue.empty():
-                self.msg_queue.get()  # Remove da fila
-            # Libera o token normalmente
-            time.sleep(5)
-            self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
-            print(f"[TOKEN] repassado por {self.nickname}")
+            self.retransmit_done = True
+            self.current_msg = (dest, msg)
+            self.tem_token = False
             return
 
         # Nova mensagem da fila?
@@ -254,11 +288,7 @@ class RingNode:
             if not self.is_token_creator:
                 time.sleep(1)
                 continue
-            if (time.time() - self.ultimo_token > self.token_timeout) and not self.token_gerado:
-                print("[ALERTA] Token perdido! Gerando novo token...")
-                self.sock.sendto(TOKEN_MSG.encode(), (self.next_ip, self.next_port))
-                self.ultimo_token = time.time()
-                self.token_gerado  = True
+            # O controle de timeout agora está no receiver_loop
             time.sleep(1)
 
     def start(self):
